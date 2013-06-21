@@ -157,22 +157,24 @@ debug_pc_to_irep(mrb_state *mrb, mrb_code *pc, uint16_t *linep)
 static void
 mdebug_default_tracer(struct mrb_state *mrb, struct mrb_irep *irep, mrb_code *pc, mrb_value *regs, int codeidx, int lineno)
 {
+  struct mrb_context *c;
   int i;
 
   printf("=== Breakpoint: irep %d/%03d %s:%u ===\n",
          irep->idx, codeidx, irep->filename, lineno);
 
-  if (regs != mrb->stack) {
+  if (regs != mrb->c->stack) {
     printf("!!! regs != mrb->stack (regs=%p) !!!\n", regs);
   }
 
   mdebug_dump_vm(mrb);
 
-  if (mrb->stack < mrb->stbase || mrb->stack >= &mrb->stbase[mrb->ci->stackidx + mrb->ci->nregs]) {
+  c = mrb->c;
+  if (c->stack < c->stbase || c->stack >= &c->stbase[c->ci->stackidx + c->ci->nregs]) {
     printf("Stack (alternate):\n");
     for (i = irep->nregs; i >= 0; i--) {
       const char *star = (i > 0) ? " " : "*";
-      printf(" %s%03d  %s\n", star, i, show_mrb_value(mrb, mrb->stack[i]));
+      printf(" %s%03d  %s\n", star, i, show_mrb_value(mrb, c->stack[i]));
     }
   }
 
@@ -245,8 +247,8 @@ mrb_mruby_mdebug_gem_final(mrb_state *mrb)
 static int
 stack_offset_in_stbase(mrb_state *mrb, mrb_value *sp)
 {
-  if (sp >= mrb->stbase && sp < mrb->stend)
-    return (int)(sp - mrb->stbase);
+  if (sp >= mrb->c->stbase && sp < mrb->c->stend)
+    return (int)(sp - mrb->c->stbase);
   else
     return -1;
 }
@@ -316,8 +318,8 @@ show_mrb_value(mrb_state *mrb, mrb_value val)
     snprintf(buf, sizeof(buf), "\"%.*s\"", RSTRING_LEN(val), RSTRING_PTR(val));
     break;
   case MRB_TT_OBJECT:
-    if (mrb_type(mrb->stbase[0]) == MRB_TT_OBJECT &&
-        mrb_obj_ptr(val) == mrb_obj_ptr(mrb->stbase[0])) {
+    if (mrb_type(mrb->c->stbase[0]) == MRB_TT_OBJECT &&
+        mrb_obj_ptr(val) == mrb_obj_ptr(mrb->c->stbase[0])) {
       return "main";
     }
     /* FALLTHRU */
@@ -344,12 +346,12 @@ show_env(mrb_state *mrb, struct REnv *env)
 void
 show_regs(mrb_state *mrb, mrb_code *pc, mrb_value *regs)
 {
-  mrb_irep *irep = mrb->ci->proc->body.irep;
+  mrb_irep *irep = mrb->c->ci->proc->body.irep;
 
   printf("* ");
   printf("irep %u, pc=%03ld, stack=%p",
-        irep->idx, (long)(pc - irep->iseq), mrb->stack);
-  if (mrb->stack != regs)
+        irep->idx, (long)(pc - irep->iseq), mrb->c->stack);
+  if (mrb->c->stack != regs)
     printf(", ***stack != regs***");
   printf("\n");
 
@@ -386,12 +388,12 @@ find_code(mrb_state *mrb, mrb_code *pc)
 void
 mdebug_dump_vm(mrb_state *mrb)
 {
-  mrb_callinfo *cibase = mrb->cibase;
+  mrb_callinfo *cibase = mrb->c->cibase;
   size_t sz;
   int ciidx, i;
 
   printf("Callinfo:\n");
-  ciidx = (int)(mrb->ci - mrb->cibase);
+  ciidx = (int)(mrb->c->ci - mrb->c->cibase);
   if (ciidx >= 0) {
     for (i = ciidx; i >= 0; i--) {
       const char *mname = mrb_sym2name_len(mrb, cibase[i].mid, &sz);
@@ -410,26 +412,26 @@ mdebug_dump_vm(mrb_state *mrb)
   }
 
   printf("Stack (base) [* => mrb->stack]:\n");
-  for (i = mrb->ci->stackidx + mrb->ci->nregs; i >= 0; i--) {
+  for (i = mrb->c->ci->stackidx + mrb->c->ci->nregs; i >= 0; i--) {
     const char *star = " ";
-    if (mrb->stack == &mrb->stbase[i])
+    if (mrb->c->stack == &mrb->c->stbase[i])
       star = "*";
-    printf(" %s%03d  %s\n", star, i, show_mrb_value(mrb, mrb->stbase[i]));
+    printf(" %s%03d  %s\n", star, i, show_mrb_value(mrb, mrb->c->stbase[i]));
   }
 
   printf("Rescue list:\n");
-  if (mrb->ci->ridx > 0) {
-    for (i = mrb->ci->ridx - 1; i >= 0; i--) {
-      printf("  %s\n", find_code(mrb, mrb->rescue[i]));
+  if (mrb->c->ci->ridx > 0) {
+    for (i = mrb->c->ci->ridx - 1; i >= 0; i--) {
+      printf("  %s\n", find_code(mrb, mrb->c->rescue[i]));
     }
   } else {
       printf("  (none)\n");
   }
 
   printf("Ensure list:\n");
-  if (mrb->ci->eidx > 0) {
-    for (i = mrb->ci->eidx - 1; i >= 0; i--) {
-      mrb_irep *irep = mrb->ensure[i]->body.irep;
+  if (mrb->c->ci->eidx > 0) {
+    for (i = mrb->c->ci->eidx - 1; i >= 0; i--) {
+      mrb_irep *irep = mrb->c->ensure[i]->body.irep;
       printf("  irep %d @%s:%u\n",
              irep->idx, irep->filename, (irep->lines ? irep->lines[0] : 0));
     }
@@ -438,9 +440,9 @@ mdebug_dump_vm(mrb_state *mrb)
   }
 
   printf("Environment:\n");
-  if (mrb->ci->env) {
+  if (mrb->c->ci->env) {
     struct REnv *env;
-    for (env = mrb->ci->env; env != NULL; env = (struct REnv *)env->c) {
+    for (env = mrb->c->ci->env; env != NULL; env = (struct REnv *)env->c) {
       const char *mname = mrb_sym2name_len(mrb, env->mid, &sz);
       int n = stack_offset_in_stbase(mrb, env->stack);
       if (n >= 0)
